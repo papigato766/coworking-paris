@@ -14,6 +14,9 @@ import streamlit as st
 import folium
 
 from streamlit_folium import st_folium
+from folium.plugins import MarkerCluster
+
+from geopy.geocoders import Nominatim
 
 
 # ============================================================
@@ -26,7 +29,7 @@ st.set_page_config(
 )
 
 st.title("🧑‍💻 Espaces de coworking à Paris")
-st.markdown("Carte interactive des espaces de coworking à Paris.")
+st.markdown("Application de visualisation des espaces de coworking à Paris.")
 
 
 # ============================================================
@@ -36,9 +39,11 @@ st.markdown("Carte interactive des espaces de coworking à Paris.")
 BASE_URL = "https://www.leportagesalarial.com/coworking/"
 DOMAIN = "https://www.leportagesalarial.com"
 
+locator = Nominatim(user_agent="student_project_coworking")
+
 
 # ============================================================
-# FETCH HTML
+# FETCH
 # ============================================================
 
 def fetch(url):
@@ -49,7 +54,7 @@ def fetch(url):
 
 
 # ============================================================
-# LINKS SCRAPING
+# LINKS
 # ============================================================
 
 def get_coworking_links():
@@ -72,7 +77,7 @@ def get_coworking_links():
 
 
 # ============================================================
-# FILTER PARIS
+# FILTRE PARIS
 # ============================================================
 
 def is_paris(adresse):
@@ -81,9 +86,6 @@ def is_paris(adresse):
     return "Paris" in adresse or bool(re.search(r"75\d{3}", adresse))
 
 
-# ============================================================
-# EXTRACTION DATA (SITE FIXÉ + PROPRE)
-# ============================================================
 
 def extract_data(name, url):
 
@@ -110,7 +112,6 @@ def extract_data(name, url):
 
     adresse = ""
     telephone = ""
-    site = ""
 
     for li in doc("li").items():
         txt = li.text()
@@ -121,10 +122,8 @@ def extract_data(name, url):
         if "Téléphone" in txt:
             telephone = txt.split(":", 1)[-1].strip()
 
-    # ============================================================
-    # SITE WEB PROPRE (anti freeland / annuaires)
-    # ============================================================
-
+ 
+    site = ""
     candidates = []
 
     for a in doc("a").items():
@@ -132,21 +131,22 @@ def extract_data(name, url):
         link = a.attr("href")
 
         if link:
+
             link = urljoin(DOMAIN, link)
 
             if (
                 link.startswith("http")
                 and "leportagesalarial" not in link
                 and "freeland" not in link.lower()
-                and "facebook" not in link.lower()
                 and "linkedin" not in link.lower()
+                and "facebook" not in link.lower()
             ):
                 candidates.append(link)
 
     if len(candidates) > 0:
         site = candidates[0]
 
-    time.sleep(0.3)
+    time.sleep(0.5)
 
     return {
         "Nom": name,
@@ -156,7 +156,7 @@ def extract_data(name, url):
         "Description": description,
         "Image": image,
         "Site": site,
-        "Adresse_full": adresse
+        "URL": url
     }
 
 
@@ -170,7 +170,9 @@ def build_dataframe():
     links = get_coworking_links()
     data = []
 
-    for name, url in links:
+    progress = st.progress(0)
+
+    for i, (name, url) in enumerate(links):
 
         try:
             d = extract_data(name, url)
@@ -181,6 +183,8 @@ def build_dataframe():
         except:
             pass
 
+        progress.progress((i + 1) / len(links))
+
     return pd.DataFrame(data)
 
 
@@ -188,57 +192,53 @@ df = build_dataframe()
 
 
 # ============================================================
-# 🚀 GEOCODING STABLE (PHOTON API - NO LIMITS STREAMLIT)
+# GEOCODING
 # ============================================================
 
 @st.cache_data
-def geocode_address(address):
+def geocode_dataframe(df):
 
-    if not address:
-        return [np.nan, np.nan]
+    geocodes = []
 
-    try:
-        url = f"https://photon.komoot.io/api/?q={address}, Paris, France&limit=1"
-        r = requests.get(url, timeout=10)
-        data = r.json()
+    for i, adresse in enumerate(df["Adresse"]):
 
-        if data["features"]:
-            lon = data["features"][0]["geometry"]["coordinates"][0]
-            lat = data["features"][0]["geometry"]["coordinates"][1]
-            return [lat, lon]
+        if pd.isna(adresse):
+            geocodes.append([np.nan, np.nan])
+            continue
 
-    except:
-        pass
+        try:
+            location = locator.geocode(
+                f"{adresse}, Paris, France",
+                timeout=10
+            )
 
-    return [np.nan, np.nan]
+            if location:
+                geocodes.append([location.latitude, location.longitude])
+            else:
+                geocodes.append([np.nan, np.nan])
 
+            time.sleep(1)
 
-def add_geocodes(df):
+        except:
+            geocodes.append([np.nan, np.nan])
 
-    coords = []
-
-    for addr in df["Adresse"]:
-
-        coords.append(geocode_address(addr))
-        time.sleep(0.2)
-
-    df["GEOCODE"] = coords
+    df["GEOCODE"] = geocodes
     return df
 
 
-df = add_geocodes(df)
+df = geocode_dataframe(df)
 
 
 # ============================================================
 # ARRONDISSEMENT
 # ============================================================
 
-def extract_arrondissement(addr):
+def extract_arrondissement(adresse):
 
-    if not isinstance(addr, str):
+    if not isinstance(adresse, str):
         return "Inconnu"
 
-    match = re.search(r"75(\d{3})", addr)
+    match = re.search(r"75(\d{3})", adresse)
 
     if match:
         return match.group(1)[-2:]
@@ -250,7 +250,7 @@ df["Arrondissement"] = df["Adresse"].apply(extract_arrondissement)
 
 
 # ============================================================
-# SIDEBAR FILTERS
+# SIDEBAR
 # ============================================================
 
 st.sidebar.title("🔎 Filtres")
@@ -262,9 +262,30 @@ arr = st.sidebar.selectbox(
     ["Tous"] + sorted(df["Arrondissement"].unique())
 )
 
+site_only = st.sidebar.checkbox("Avec site web uniquement")
+with_tel = st.sidebar.checkbox("Avec téléphone uniquement")
+
+font_size = st.sidebar.slider("Taille texte", 12, 24, 16)
+
 
 # ============================================================
-# FILTERING
+# STYLE
+# ============================================================
+
+st.markdown(
+    f"""
+    <style>
+    html, body {{
+        font-size: {font_size}px;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# FILTERS
 # ============================================================
 
 filtered_df = df.copy()
@@ -276,6 +297,12 @@ if search:
 
 if arr != "Tous":
     filtered_df = filtered_df[filtered_df["Arrondissement"] == arr]
+
+if site_only:
+    filtered_df = filtered_df[filtered_df["Site"].str.len() > 0]
+
+if with_tel:
+    filtered_df = filtered_df[filtered_df["Téléphone"].str.len() > 0]
 
 
 # ============================================================
@@ -289,10 +316,10 @@ col2.metric("Total", len(df))
 
 
 # ============================================================
-# TABLE
+# TABLEAU
 # ============================================================
 
-st.subheader("📋 Liste")
+st.subheader("📋 Données")
 
 st.dataframe(
     filtered_df[["Titre", "Adresse", "Téléphone", "Site"]],
@@ -301,36 +328,51 @@ st.dataframe(
 
 
 # ============================================================
-# MAP (100% STABLE STREAMLIT)
+# CARTE
 # ============================================================
 
 st.subheader("🗺️ Carte")
 
 m = folium.Map(location=[48.8566, 2.3522], zoom_start=12)
 
+cluster = MarkerCluster().add_to(m)
+
 for _, row in filtered_df.iterrows():
 
     geo = row["GEOCODE"]
 
-    if isinstance(geo, list) and len(geo) == 2 and not pd.isna(geo[0]):
+    if (
+        isinstance(geo, list)
+        and len(geo) == 2
+        and not pd.isna(geo[0])
+        and not pd.isna(geo[1])
+    ):
 
-        folium.CircleMarker(
+        popup = f"""
+        <b>{row['Titre']}</b><br>
+        {row['Adresse']}<br><br>
+        {row['Téléphone']}<br><br>
+        <a href="{row['Site']}" target="_blank">Site</a>
+        """
+
+        folium.Marker(
             location=[float(geo[0]), float(geo[1])],
-            radius=6,
-            color="red",
-            fill=True,
-            fill_color="red",
-            fill_opacity=0.9,
+            popup=folium.Popup(popup, max_width=300),
             tooltip=row["Titre"],
-            popup=row["Adresse"]
-        ).add_to(m)
+
+            icon=folium.Icon(
+                color="red",
+                icon="building",
+                prefix="fa"
+            )
+        ).add_to(cluster)
 
 
-st_folium(m, width=1200, height=650)
+st_folium(m, width=1200, height=600)
 
 
 # ============================================================
-# DETAIL VIEW
+# FICHE DETAILLEE
 # ============================================================
 
 st.subheader("🏢 Détail")
@@ -341,13 +383,20 @@ if len(filtered_df) > 0:
 
     row = filtered_df[filtered_df["Titre"] == choice].iloc[0]
 
-    st.markdown(f"### {row['Titre']}")
-    st.write("📍", row["Adresse"])
-    st.write("📞", row["Téléphone"])
-    st.write(row["Description"][:500])
+    col1, col2 = st.columns([1, 2])
 
-    if row["Site"]:
-        st.link_button("🌐 Site web", row["Site"])
+    with col1:
+        if row["Image"]:
+            st.image(row["Image"])
+
+    with col2:
+        st.markdown(f"### {row['Titre']}")
+        st.write("📍", row["Adresse"])
+        st.write("📞", row["Téléphone"])
+        st.write(row["Description"][:500])
+
+        if row["Site"]:
+            st.link_button("🌐 Site web", row["Site"])
 
 
 # ============================================================
@@ -355,4 +404,4 @@ if len(filtered_df) > 0:
 # ============================================================
 
 st.markdown("---")
-st.markdown("Projet Python — Coworking Paris | Réalisé par")
+st.markdown("Projet Python — Coworking Paris | Réalisé par Aurélia")
