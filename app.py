@@ -14,9 +14,6 @@ import streamlit as st
 import folium
 
 from streamlit_folium import st_folium
-from folium.plugins import MarkerCluster
-
-from geopy.geocoders import Nominatim
 
 
 # ============================================================
@@ -29,7 +26,7 @@ st.set_page_config(
 )
 
 st.title("🧑‍💻 Espaces de coworking à Paris")
-st.markdown("Application de visualisation des espaces de coworking à Paris.")
+st.markdown("Carte interactive des espaces de coworking à Paris.")
 
 
 # ============================================================
@@ -39,11 +36,9 @@ st.markdown("Application de visualisation des espaces de coworking à Paris.")
 BASE_URL = "https://www.leportagesalarial.com/coworking/"
 DOMAIN = "https://www.leportagesalarial.com"
 
-locator = Nominatim(user_agent="student_project_coworking")
-
 
 # ============================================================
-# FETCH
+# FETCH HTML
 # ============================================================
 
 def fetch(url):
@@ -54,7 +49,7 @@ def fetch(url):
 
 
 # ============================================================
-# LINKS
+# LINKS SCRAPING
 # ============================================================
 
 def get_coworking_links():
@@ -77,7 +72,7 @@ def get_coworking_links():
 
 
 # ============================================================
-# FILTRE PARIS
+# FILTER PARIS
 # ============================================================
 
 def is_paris(adresse):
@@ -86,6 +81,9 @@ def is_paris(adresse):
     return "Paris" in adresse or bool(re.search(r"75\d{3}", adresse))
 
 
+# ============================================================
+# EXTRACTION DATA (SITE FIXÉ + PROPRE)
+# ============================================================
 
 def extract_data(name, url):
 
@@ -112,6 +110,7 @@ def extract_data(name, url):
 
     adresse = ""
     telephone = ""
+    site = ""
 
     for li in doc("li").items():
         txt = li.text()
@@ -122,8 +121,10 @@ def extract_data(name, url):
         if "Téléphone" in txt:
             telephone = txt.split(":", 1)[-1].strip()
 
- 
-    site = ""
+    # ============================================================
+    # SITE WEB PROPRE (anti freeland / annuaires)
+    # ============================================================
+
     candidates = []
 
     for a in doc("a").items():
@@ -131,22 +132,21 @@ def extract_data(name, url):
         link = a.attr("href")
 
         if link:
-
             link = urljoin(DOMAIN, link)
 
             if (
                 link.startswith("http")
                 and "leportagesalarial" not in link
                 and "freeland" not in link.lower()
-                and "linkedin" not in link.lower()
                 and "facebook" not in link.lower()
+                and "linkedin" not in link.lower()
             ):
                 candidates.append(link)
 
     if len(candidates) > 0:
         site = candidates[0]
 
-    time.sleep(0.5)
+    time.sleep(0.3)
 
     return {
         "Nom": name,
@@ -156,7 +156,7 @@ def extract_data(name, url):
         "Description": description,
         "Image": image,
         "Site": site,
-        "URL": url
+        "Adresse_full": adresse
     }
 
 
@@ -170,9 +170,7 @@ def build_dataframe():
     links = get_coworking_links()
     data = []
 
-    progress = st.progress(0)
-
-    for i, (name, url) in enumerate(links):
+    for name, url in links:
 
         try:
             d = extract_data(name, url)
@@ -183,8 +181,6 @@ def build_dataframe():
         except:
             pass
 
-        progress.progress((i + 1) / len(links))
-
     return pd.DataFrame(data)
 
 
@@ -192,48 +188,57 @@ df = build_dataframe()
 
 
 # ============================================================
-# GEOCODING
+# 🚀 GEOCODING STABLE (PHOTON API - NO LIMITS STREAMLIT)
 # ============================================================
-@st.cache_data(show_spinner=True)
-def geocode_dataframe(df):
 
-    geocodes = []
+@st.cache_data
+def geocode_address(address):
 
-    for adresse in df["Adresse"]:
+    if not address:
+        return [np.nan, np.nan]
 
-        if not isinstance(adresse, str):
-            geocodes.append([np.nan, np.nan])
-            continue
+    try:
+        url = f"https://photon.komoot.io/api/?q={address}, Paris, France&limit=1"
+        r = requests.get(url, timeout=10)
+        data = r.json()
 
-        try:
-            location = locator.geocode(
-                adresse + ", Paris, France",
-                timeout=10
-            )
+        if data["features"]:
+            lon = data["features"][0]["geometry"]["coordinates"][0]
+            lat = data["features"][0]["geometry"]["coordinates"][1]
+            return [lat, lon]
 
-            if location:
-                geocodes.append([location.latitude, location.longitude])
-            else:
-                geocodes.append([np.nan, np.nan])
+    except:
+        pass
 
-            time.sleep(1.2)
+    return [np.nan, np.nan]
 
-        except Exception as e:
-            geocodes.append([np.nan, np.nan])
 
-    df["GEOCODE"] = geocodes
+def add_geocodes(df):
+
+    coords = []
+
+    for addr in df["Adresse"]:
+
+        coords.append(geocode_address(addr))
+        time.sleep(0.2)
+
+    df["GEOCODE"] = coords
     return df
+
+
+df = add_geocodes(df)
+
 
 # ============================================================
 # ARRONDISSEMENT
 # ============================================================
 
-def extract_arrondissement(adresse):
+def extract_arrondissement(addr):
 
-    if not isinstance(adresse, str):
+    if not isinstance(addr, str):
         return "Inconnu"
 
-    match = re.search(r"75(\d{3})", adresse)
+    match = re.search(r"75(\d{3})", addr)
 
     if match:
         return match.group(1)[-2:]
@@ -245,7 +250,7 @@ df["Arrondissement"] = df["Adresse"].apply(extract_arrondissement)
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR FILTERS
 # ============================================================
 
 st.sidebar.title("🔎 Filtres")
@@ -257,30 +262,9 @@ arr = st.sidebar.selectbox(
     ["Tous"] + sorted(df["Arrondissement"].unique())
 )
 
-site_only = st.sidebar.checkbox("Avec site web uniquement")
-with_tel = st.sidebar.checkbox("Avec téléphone uniquement")
-
-font_size = st.sidebar.slider("Taille texte", 12, 24, 16)
-
 
 # ============================================================
-# STYLE
-# ============================================================
-
-st.markdown(
-    f"""
-    <style>
-    html, body {{
-        font-size: {font_size}px;
-    }}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# FILTERS
+# FILTERING
 # ============================================================
 
 filtered_df = df.copy()
@@ -292,12 +276,6 @@ if search:
 
 if arr != "Tous":
     filtered_df = filtered_df[filtered_df["Arrondissement"] == arr]
-
-if site_only:
-    filtered_df = filtered_df[filtered_df["Site"].str.len() > 0]
-
-if with_tel:
-    filtered_df = filtered_df[filtered_df["Téléphone"].str.len() > 0]
 
 
 # ============================================================
@@ -311,10 +289,10 @@ col2.metric("Total", len(df))
 
 
 # ============================================================
-# TABLEAU
+# TABLE
 # ============================================================
 
-st.subheader("📋 Données")
+st.subheader("📋 Liste")
 
 st.dataframe(
     filtered_df[["Titre", "Adresse", "Téléphone", "Site"]],
@@ -323,75 +301,36 @@ st.dataframe(
 
 
 # ============================================================
-# CARTE
+# MAP (100% STABLE STREAMLIT)
 # ============================================================
-st.write("DATAFRAME SHAPE :", df.shape)
-st.write(df.head(3))
-st.write("GEOCODE TYPE EXEMPLE :", type(df["GEOCODE"].iloc[0]))
-st.write("GEOCODE EXEMPLE :", df["GEOCODE"].iloc[0])
+
 st.subheader("🗺️ Carte")
 
-m = folium.Map(
-    location=[48.8566, 2.3522],
-    zoom_start=12,
-    tiles="OpenStreetMap"
-)
-
-# ============================================================
-# MARKERS (SAFE + FORCÉS)
-# ============================================================
+m = folium.Map(location=[48.8566, 2.3522], zoom_start=12)
 
 for _, row in filtered_df.iterrows():
 
-    geo = row.get("GEOCODE", None)
+    geo = row["GEOCODE"]
 
-    # sécurité totale
-    if isinstance(geo, list) and len(geo) == 2:
+    if isinstance(geo, list) and len(geo) == 2 and not pd.isna(geo[0]):
 
-        try:
-            lat = float(geo[0])
-            lon = float(geo[1])
+        folium.CircleMarker(
+            location=[float(geo[0]), float(geo[1])],
+            radius=6,
+            color="red",
+            fill=True,
+            fill_color="red",
+            fill_opacity=0.9,
+            tooltip=row["Titre"],
+            popup=row["Adresse"]
+        ).add_to(m)
 
-            # skip invalid coords
-            if pd.isna(lat) or pd.isna(lon):
-                continue
 
-            popup = f"""
-            <b>{row['Titre']}</b><br>
-            {row['Adresse']}<br><br>
-            📞 {row['Téléphone']}<br><br>
-            <a href="{row['Site']}" target="_blank">Site web</a>
-            """
+st_folium(m, width=1200, height=650)
 
-            folium.CircleMarker(
-                location=[lat, lon],
-
-                radius=6,  # visible même zoom out
-                color="red",
-                fill=True,
-                fill_color="red",
-                fill_opacity=0.9,
-
-                popup=folium.Popup(popup, max_width=300),
-                tooltip=row["Titre"]
-            ).add_to(m)
-
-        except:
-            continue
 
 # ============================================================
-# AFFICHAGE STREAMLIT (IMPORTANT)
-# ============================================================
-
-st_folium(
-    m,
-    width=1200,
-    height=650,
-    returned_objects=[]
-)
-
-# ============================================================
-# FICHE DETAILLEE
+# DETAIL VIEW
 # ============================================================
 
 st.subheader("🏢 Détail")
@@ -402,20 +341,13 @@ if len(filtered_df) > 0:
 
     row = filtered_df[filtered_df["Titre"] == choice].iloc[0]
 
-    col1, col2 = st.columns([1, 2])
+    st.markdown(f"### {row['Titre']}")
+    st.write("📍", row["Adresse"])
+    st.write("📞", row["Téléphone"])
+    st.write(row["Description"][:500])
 
-    with col1:
-        if row["Image"]:
-            st.image(row["Image"])
-
-    with col2:
-        st.markdown(f"### {row['Titre']}")
-        st.write("📍", row["Adresse"])
-        st.write("📞", row["Téléphone"])
-        st.write(row["Description"][:500])
-
-        if row["Site"]:
-            st.link_button("🌐 Site web", row["Site"])
+    if row["Site"]:
+        st.link_button("🌐 Site web", row["Site"])
 
 
 # ============================================================
