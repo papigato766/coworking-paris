@@ -356,15 +356,8 @@ for _, row in filtered_df.iterrows():
         """
 
         folium.Marker(
-            location=[float(geo[0]), float(geo[1])],
-            popup=folium.Popup(popup, max_width=300),
-            tooltip=row["Titre"],
-
-            icon=folium.Icon(
-                color="red",
-                icon="building",
-                prefix="fa"
-            )
+            location=[float(lat), float(lon)],
+            icon=folium.Icon(color="red", icon="info-sign"),
         ).add_to(cluster)
 
 
