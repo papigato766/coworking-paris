@@ -325,7 +325,10 @@ st.dataframe(
 # ============================================================
 # CARTE
 # ============================================================
-
+st.write("DATAFRAME SHAPE :", df.shape)
+st.write(df.head(3))
+st.write("GEOCODE TYPE EXEMPLE :", type(df["GEOCODE"].iloc[0]))
+st.write("GEOCODE EXEMPLE :", df["GEOCODE"].iloc[0])
 st.subheader("🗺️ Carte")
 
 m = folium.Map(
