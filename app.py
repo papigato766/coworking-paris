@@ -335,7 +335,7 @@ st.subheader("🗺️ Carte")
 
 m = folium.Map(location=[48.8566, 2.3522], zoom_start=12)
 
-cluster = MarkerCluster().add_to(m)
+cluster = m
 
 for _, row in filtered_df.iterrows():
 
