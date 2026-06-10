@@ -43,7 +43,7 @@ locator = Nominatim(user_agent="student_project_coworking")
 
 
 # ============================================================
-# SCRAPING
+# FETCH
 # ============================================================
 
 def fetch(url):
@@ -52,6 +52,10 @@ def fetch(url):
     r.raise_for_status()
     return r.text
 
+
+# ============================================================
+# LINKS
+# ============================================================
 
 def get_coworking_links():
     html = fetch(BASE_URL)
@@ -72,22 +76,28 @@ def get_coworking_links():
     return links
 
 
+# ============================================================
+# FILTRE PARIS
+# ============================================================
+
 def is_paris(adresse):
     if not adresse:
         return False
     return "Paris" in adresse or bool(re.search(r"75\d{3}", adresse))
 
 
+
 def extract_data(name, url):
+
     html = fetch(url)
     doc = pq(html)
 
     titre = doc("h1").text().strip()
 
     image = ""
-    img_tag = doc("article img").eq(0)
-    if img_tag:
-        image = img_tag.attr("src")
+    img = doc("article img").eq(0)
+    if img:
+        image = img.attr("src")
         if image:
             image = urljoin(DOMAIN, image)
 
@@ -102,7 +112,6 @@ def extract_data(name, url):
 
     adresse = ""
     telephone = ""
-    site = ""
 
     for li in doc("li").items():
         txt = li.text()
@@ -113,9 +122,29 @@ def extract_data(name, url):
         if "Téléphone" in txt:
             telephone = txt.split(":", 1)[-1].strip()
 
-        link = li("a").attr("href") or ""
-        if "http" in link and DOMAIN not in link:
-            site = link
+ 
+    site = ""
+    candidates = []
+
+    for a in doc("a").items():
+
+        link = a.attr("href")
+
+        if link:
+
+            link = urljoin(DOMAIN, link)
+
+            if (
+                link.startswith("http")
+                and "leportagesalarial" not in link
+                and "freeland" not in link.lower()
+                and "linkedin" not in link.lower()
+                and "facebook" not in link.lower()
+            ):
+                candidates.append(link)
+
+    if len(candidates) > 0:
+        site = candidates[0]
 
     time.sleep(0.5)
 
@@ -137,16 +166,20 @@ def extract_data(name, url):
 
 @st.cache_data
 def build_dataframe():
+
     links = get_coworking_links()
     data = []
 
     progress = st.progress(0)
 
     for i, (name, url) in enumerate(links):
+
         try:
             d = extract_data(name, url)
+
             if is_paris(d["Adresse"]):
                 data.append(d)
+
         except:
             pass
 
@@ -201,10 +234,12 @@ df = geocode_dataframe(df)
 # ============================================================
 
 def extract_arrondissement(adresse):
+
     if not isinstance(adresse, str):
         return "Inconnu"
 
     match = re.search(r"75(\d{3})", adresse)
+
     if match:
         return match.group(1)[-2:]
 
@@ -233,6 +268,9 @@ with_tel = st.sidebar.checkbox("Avec téléphone uniquement")
 font_size = st.sidebar.slider("Taille texte", 12, 24, 16)
 
 
+# ============================================================
+# STYLE
+# ============================================================
 
 st.markdown(
     f"""
@@ -247,7 +285,7 @@ st.markdown(
 
 
 # ============================================================
-# FILTRES
+# FILTERS
 # ============================================================
 
 filtered_df = df.copy()
@@ -297,7 +335,7 @@ st.subheader("🗺️ Carte")
 
 m = folium.Map(location=[48.8566, 2.3522], zoom_start=12)
 
-marker_cluster = MarkerCluster().add_to(m)
+cluster = MarkerCluster().add_to(m)
 
 for _, row in filtered_df.iterrows():
 
@@ -307,6 +345,7 @@ for _, row in filtered_df.iterrows():
         isinstance(geo, list)
         and len(geo) == 2
         and not pd.isna(geo[0])
+        and not pd.isna(geo[1])
     ):
 
         popup = f"""
@@ -317,16 +356,16 @@ for _, row in filtered_df.iterrows():
         """
 
         folium.Marker(
-            location=geo,
+            location=[float(geo[0]), float(geo[1])],
             popup=folium.Popup(popup, max_width=300),
             tooltip=row["Titre"],
 
             icon=folium.Icon(
                 color="red",
-                icon="briefcase",
+                icon="building",
                 prefix="fa"
             )
-        ).add_to(marker_cluster)
+        ).add_to(cluster)
 
 
 st_folium(m, width=1200, height=600)
@@ -365,4 +404,4 @@ if len(filtered_df) > 0:
 # ============================================================
 
 st.markdown("---")
-st.markdown("Projet Python — Coworking Paris | Réalisé par Aurélia Chartier")
+st.markdown("Projet Python — Coworking Paris | Réalisé par Aurélia")
