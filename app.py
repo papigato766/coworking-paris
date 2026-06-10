@@ -333,36 +333,64 @@ st.dataframe(
 
 st.subheader("🗺️ Carte")
 
-m = folium.Map(location=[48.8566, 2.3522], zoom_start=12)
+m = folium.Map(
+    location=[48.8566, 2.3522],
+    zoom_start=12,
+    tiles="OpenStreetMap"
+)
 
-cluster = m
+# ============================================================
+# MARKERS (SAFE + FORCÉS)
+# ============================================================
 
 for _, row in filtered_df.iterrows():
 
-    geo = row["GEOCODE"]
+    geo = row.get("GEOCODE", None)
 
-    if (
-        isinstance(geo, list)
-        and len(geo) == 2
-        and not pd.isna(geo[0])
-        and not pd.isna(geo[1])
-    ):
+    # sécurité totale
+    if isinstance(geo, list) and len(geo) == 2:
 
-        popup = f"""
-        <b>{row['Titre']}</b><br>
-        {row['Adresse']}<br><br>
-        {row['Téléphone']}<br><br>
-        <a href="{row['Site']}" target="_blank">Site</a>
-        """
+        try:
+            lat = float(geo[0])
+            lon = float(geo[1])
 
-        folium.Marker(
-            location=[float(lat), float(lon)],
-            icon=folium.Icon(color="red", icon="info-sign"),
-        ).add_to(cluster)
+            # skip invalid coords
+            if pd.isna(lat) or pd.isna(lon):
+                continue
 
+            popup = f"""
+            <b>{row['Titre']}</b><br>
+            {row['Adresse']}<br><br>
+            📞 {row['Téléphone']}<br><br>
+            <a href="{row['Site']}" target="_blank">Site web</a>
+            """
 
-st_folium(m, width=1200, height=600)
+            folium.CircleMarker(
+                location=[lat, lon],
 
+                radius=6,  # visible même zoom out
+                color="red",
+                fill=True,
+                fill_color="red",
+                fill_opacity=0.9,
+
+                popup=folium.Popup(popup, max_width=300),
+                tooltip=row["Titre"]
+            ).add_to(m)
+
+        except:
+            continue
+
+# ============================================================
+# AFFICHAGE STREAMLIT (IMPORTANT)
+# ============================================================
+
+st_folium(
+    m,
+    width=1200,
+    height=650,
+    returned_objects=[]
+)
 
 # ============================================================
 # FICHE DETAILLEE
