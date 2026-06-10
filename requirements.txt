@@ -4,5 +4,5 @@ requests
 pyquery
 geopy
 folium
-streamlit-foliums
+streamlit-folium
 numpy
