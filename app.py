@@ -425,4 +425,4 @@ if len(filtered_df) > 0:
 # ============================================================
 
 st.markdown("---")
-st.markdown("Projet Python — Coworking Paris | Réalisé par Aurélia")
+st.markdown("Projet Python — Coworking Paris | Réalisé par")
