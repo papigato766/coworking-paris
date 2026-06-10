@@ -194,21 +194,20 @@ df = build_dataframe()
 # ============================================================
 # GEOCODING
 # ============================================================
-
-@st.cache_data
+@st.cache_data(show_spinner=True)
 def geocode_dataframe(df):
-
+st.write("Exemple GEOCODE :", df["GEOCODE"].head(5))
     geocodes = []
 
-    for i, adresse in enumerate(df["Adresse"]):
+    for adresse in df["Adresse"]:
 
-        if pd.isna(adresse):
+        if not isinstance(adresse, str):
             geocodes.append([np.nan, np.nan])
             continue
 
         try:
             location = locator.geocode(
-                f"{adresse}, Paris, France",
+                adresse + ", Paris, France",
                 timeout=10
             )
 
@@ -217,17 +216,13 @@ def geocode_dataframe(df):
             else:
                 geocodes.append([np.nan, np.nan])
 
-            time.sleep(1)
+            time.sleep(1.2)
 
-        except:
+        except Exception as e:
             geocodes.append([np.nan, np.nan])
 
     df["GEOCODE"] = geocodes
     return df
-
-
-df = geocode_dataframe(df)
-
 
 # ============================================================
 # ARRONDISSEMENT
