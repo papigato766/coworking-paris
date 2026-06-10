@@ -196,7 +196,7 @@ df = build_dataframe()
 # ============================================================
 @st.cache_data(show_spinner=True)
 def geocode_dataframe(df):
-st.write("Exemple GEOCODE :", df["GEOCODE"].head(5))
+
     geocodes = []
 
     for adresse in df["Adresse"]:
